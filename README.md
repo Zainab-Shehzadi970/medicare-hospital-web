@@ -1,36 +1,49 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# Medicare Hospital: Website and Doctor Dashboard
+
+Web application for Medicare Hospital built with Next.js. It has a public landing page and a doctor dashboard where doctors see their appointments in real time. Appointments are booked by patients from the Android app and stored in Supabase.
+
+## Features
+
+### Landing page
+- Header, hero section with quick OPD slot search, about, services, doctors, facilities, testimonials, FAQ, emergency section and footer
+- Responsive design with a red / white color scheme
+
+### Doctor dashboard (`/doctor-appointments`)
+- Doctor login (Supabase Auth)
+- Summary cards, tabs and search for appointments
+- Appointments table with Complete and Cancel actions
+- Real-time updates: a new booking from the patient app appears without refreshing the page
+- Each doctor sees only their own appointments (Row Level Security)
+
+## Tech Stack
+- Next.js (Pages Router)
+- Tailwind CSS
+- Supabase: Auth, PostgreSQL, Realtime
+
+## Related Repository
+Patient Android app (React Native): https://github.com/Zainab-Shehzadi970/Medicare-Hospital-System
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
+- Node.js 20 or newer
 
+### Setup
+1. Install packages:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+   npm install
 ```
+2. Create a `.env.local` file in the project root:
+```
+   NEXT_PUBLIC_SUPABASE_URL=https://YOUR-PROJECT.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR-PUBLISHABLE-KEY
+```
+   Use only the publishable (anon) key. Never put the `service_role` / secret key here.
+3. Run the development server:
+```bash
+   npm run dev
+```
+4. Open http://localhost:3000 for the landing page and http://localhost:3000/doctor-appointments for the doctor dashboard.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Database
+The Supabase backend (tables `profiles`, `departments`, `doctors`, `doctor_schedules`, `appointments`, Row Level Security policies and realtime) is shared with the patient app. Doctor accounts are created in Supabase Auth and linked to a row in the `doctors` table.
