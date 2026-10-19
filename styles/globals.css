@@ -51,3 +51,9 @@ html {
     scroll-behavior: auto;
   }
 }
+/* Laptop screens: scale the whole UI down to 75% (same as 75% browser zoom) */
+@media (min-width: 1024px) and (max-width: 1535px) {
+  html {
+    font-size: 75%;
+  }
+}
