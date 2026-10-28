@@ -112,6 +112,38 @@ const NAV = [
 
 /* ---------------- Chat ---------------- */
 
+const SendIcon = (p) => (
+  <Icon {...p}>
+    <path d="m22 2-7 20-4-9-9-4 20-7z" />
+    <path d="M22 2 11 13" />
+  </Icon>
+);
+
+const timeOnly = (iso) => {
+  const d = new Date(iso);
+  const h = d.getHours();
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(d.getMinutes()).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+};
+const dayKey = (iso) => {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+};
+const dayLabel = (iso) => {
+  const d = new Date(iso);
+  const now = new Date();
+  const yest = new Date();
+  yest.setDate(now.getDate() - 1);
+  if (dayKey(iso) === dayKey(now.toISOString())) return 'Today';
+  if (dayKey(iso) === dayKey(yest.toISOString())) return 'Yesterday';
+  return `${d.getDate()} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`;
+};
+// Short stamp for the doctors list: time if today, otherwise the date
+const listStamp = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return dayKey(iso) === dayKey(new Date().toISOString()) ? timeOnly(iso) : `${d.getDate()} ${MONTH_NAMES[d.getMonth()]}`;
+};
+
 function PatientMessages({ userId, doctors, messages, reload, selected, setSelected }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -173,83 +205,134 @@ function PatientMessages({ userId, doctors, messages, reload, selected, setSelec
     reload();
   };
 
+  const totalUnread = threads.reduce((n, t) => n + t.unread, 0);
+
   return (
-    <div className="bg-white border border-gray-200/80 rounded-2xl shadow-md shadow-slate-200/60 overflow-hidden grid md:grid-cols-[18rem_1fr] h-[calc(100vh-11rem)] min-h-[28rem]">
-      <div className={`border-r border-gray-200 overflow-y-auto ${selected ? 'hidden md:block' : ''}`}>
-        <div className="px-4 py-3 border-b border-gray-100 text-xs font-bold tracking-wider text-gray-500 uppercase">
-          Your doctors
+    <div className="bg-white border border-gray-200/80 rounded-2xl shadow-md shadow-slate-200/60 overflow-hidden grid md:grid-cols-[22rem_1fr] h-[calc(100vh-11rem)] min-h-[30rem]">
+      {/* Doctors list */}
+      <div className={`border-r border-gray-100 bg-white flex-col min-h-0 ${selected ? 'hidden md:flex' : 'flex'}`}>
+        <div className="px-5 pt-5 pb-3 flex items-center justify-between">
+          <h3 className="text-lg font-extrabold text-gray-900 tracking-tight">Your doctors</h3>
+          {totalUnread > 0 && (
+            <span className="text-xs font-bold bg-red-50 text-red-700 border border-red-100 rounded-full px-2.5 py-1">
+              {totalUnread} unread
+            </span>
+          )}
         </div>
-        {threads.length === 0 && (
-          <p className="p-5 text-sm text-gray-500">
-            Chat unlocks once a doctor marks your appointment as completed.
-          </p>
-        )}
-        {threads.map((t) => (
-          <button
-            key={t.id}
-            onClick={() => setSelected(t.id)}
-            className={`w-full text-left px-4 py-3 border-b border-gray-100 hover:bg-gray-50 ${
-              selected === t.id ? 'bg-red-50' : ''
-            }`}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-bold text-gray-900 truncate">{t.name}</span>
-              {t.unread > 0 && (
-                <span className="text-xs font-bold bg-red-600 text-white rounded-full px-2 py-0.5">{t.unread}</span>
-              )}
+
+        <div className="flex-1 overflow-y-auto px-3 pb-3">
+          {threads.length === 0 && (
+            <div className="px-3 py-10 text-center">
+              <div className="mx-auto w-12 h-12 rounded-2xl bg-red-50 text-red-500 flex items-center justify-center">
+                <ChatIcon className="w-5 h-5" />
+              </div>
+              <p className="mt-3 text-sm text-gray-500">
+                Chat unlocks once a doctor marks your appointment as completed.
+              </p>
             </div>
-            <div className="text-xs text-gray-500 truncate mt-0.5">
-              {t.last ? `${t.last.sender === 'patient' ? 'You: ' : ''}${t.last.body}` : 'Tap to start chatting'}
-            </div>
-          </button>
-        ))}
+          )}
+          {threads.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setSelected(t.id)}
+              className={`w-full text-left flex items-center gap-3 px-3 py-3 mb-1 rounded-xl transition-colors ${
+                selected === t.id ? 'bg-red-50 ring-1 ring-red-100' : 'hover:bg-gray-50'
+              }`}
+            >
+              <div className="w-11 h-11 rounded-full bg-gradient-to-br from-red-500 to-red-700 text-white text-sm font-bold flex items-center justify-center shrink-0">
+                {initials(t.name) || 'D'}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className={`truncate text-sm ${t.unread > 0 ? 'font-extrabold' : 'font-bold'} text-gray-900`}>
+                    {t.name}
+                  </span>
+                  <span className="text-[11px] text-gray-400 shrink-0">{listStamp(t.last?.created_at)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-2 mt-0.5">
+                  <span className={`truncate text-xs ${t.unread > 0 ? 'text-gray-800 font-semibold' : 'text-gray-500'}`}>
+                    {t.last
+                      ? `${t.last.sender === 'patient' ? 'You: ' : ''}${t.last.body}`
+                      : t.specialization || 'Tap to start chatting'}
+                  </span>
+                  {t.unread > 0 && (
+                    <span className="text-[11px] font-bold bg-red-600 text-white rounded-full min-w-[20px] h-5 px-1.5 flex items-center justify-center shrink-0">
+                      {t.unread}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
       </div>
 
-      <div className={`${selected ? 'flex' : 'hidden md:flex'} flex-col min-h-0`}>
+      {/* Chat */}
+      <div className={`${selected ? 'flex' : 'hidden md:flex'} flex-col min-h-0 bg-slate-50/70`}>
         {!current ? (
-          <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">
-            Select a doctor to start chatting.
+          <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
+            <div className="w-16 h-16 rounded-3xl bg-white border border-gray-200 shadow-sm text-red-500 flex items-center justify-center">
+              <ChatIcon className="w-7 h-7" />
+            </div>
+            <h4 className="mt-4 text-lg font-extrabold text-gray-900">Your conversations</h4>
+            <p className="mt-1 text-sm text-gray-500 max-w-xs">
+              Select a doctor from the list to read and send messages.
+            </p>
           </div>
         ) : (
           <>
-            <div className="px-4 py-3 border-b border-gray-200 flex items-center gap-3">
+            <div className="px-5 py-3.5 bg-white border-b border-gray-100 flex items-center gap-3 shadow-sm">
               <button
                 onClick={() => setSelected(null)}
-                className="md:hidden text-gray-600 font-bold px-2"
+                className="md:hidden text-2xl leading-none text-red-600 font-bold px-1"
                 aria-label="Back"
               >
                 ‹
               </button>
-              <div className="min-w-0">
+              <div className="w-11 h-11 rounded-full bg-gradient-to-br from-red-500 to-red-700 text-white text-sm font-bold flex items-center justify-center shrink-0">
+                {initials(current.name) || 'D'}
+              </div>
+              <div className="min-w-0 flex-1">
                 <div className="font-extrabold text-gray-900 truncate">{current.name}</div>
-                <div className="text-xs text-gray-500">{current.specialization}</div>
+                <div className="text-xs text-gray-500 truncate">{current.specialization}</div>
               </div>
             </div>
 
-            <p className="text-[11px] text-amber-800 bg-amber-50 px-4 py-2 text-center">
+            <p className="text-[11px] text-amber-800 bg-amber-50 border-b border-amber-100 px-4 py-2 text-center">
               Not for emergencies. In an emergency call the hospital or go to the nearest emergency room.
             </p>
 
-            <div ref={listRef} className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50">
+            <div ref={listRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
               {thread.length === 0 && (
-                <p className="text-center text-sm text-gray-500 mt-8">
+                <p className="text-center text-sm text-gray-500 mt-10">
                   No messages yet. Ask your doctor about your medicine or follow-up.
                 </p>
               )}
-              {thread.map((m) => {
+              {thread.map((m, i) => {
                 const mine = m.sender === 'patient';
+                const newDay = i === 0 || dayKey(thread[i - 1].created_at) !== dayKey(m.created_at);
                 return (
-                  <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-                    <div
-                      className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm ${
-                        mine
-                          ? 'bg-gradient-to-br from-red-500 to-red-700 text-white rounded-br-md shadow-md shadow-red-500/20'
-                          : 'bg-white border border-gray-200 text-gray-900 rounded-bl-md'
-                      }`}
-                    >
-                      <div className="whitespace-pre-wrap break-words">{m.body}</div>
-                      <div className={`text-[10px] mt-1 ${mine ? 'text-white/70' : 'text-gray-400'}`}>
-                        {fmtMsgTime(m.created_at)}
+                  <div key={m.id}>
+                    {newDay && (
+                      <div className="flex justify-center my-3">
+                        <span className="bg-white border border-gray-200 text-gray-500 text-[11px] font-semibold rounded-full px-3 py-1 shadow-sm">
+                          {dayLabel(m.created_at)}
+                        </span>
+                      </div>
+                    )}
+                    <div className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
+                      <div
+                        className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm ${
+                          mine
+                            ? 'bg-gradient-to-br from-red-500 to-red-700 text-white rounded-br-md shadow-md shadow-red-500/20'
+                            : 'bg-white border border-gray-200/80 text-gray-900 rounded-bl-md shadow-sm'
+                        }`}
+                      >
+                        <div className="whitespace-pre-wrap break-words leading-relaxed">{m.body}</div>
+                        <div className={`text-[10px] mt-1 text-right ${mine ? 'text-white/75' : 'text-gray-400'}`}>
+                          {timeOnly(m.created_at)}
+                          {mine && m.read_at ? ' · Seen' : ''}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -257,21 +340,23 @@ function PatientMessages({ userId, doctors, messages, reload, selected, setSelec
               })}
             </div>
 
-            {err && <div className="bg-red-50 text-red-700 text-sm px-4 py-2">{err}</div>}
-            <form onSubmit={send} className="p-3 border-t border-gray-200 flex gap-2">
+            {err && <div className="bg-red-50 text-red-700 text-sm px-5 py-2">{err}</div>}
+            <form onSubmit={send} className="px-4 py-3 bg-white border-t border-gray-100 flex items-center gap-2.5">
               <input
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 maxLength={2000}
                 placeholder="Type a message..."
-                className="flex-1 border border-gray-200 bg-gray-50 rounded-xl px-4 py-2.5 text-sm text-gray-900 focus:outline-none focus:border-red-600 focus:bg-white"
+                className="flex-1 border border-gray-200 bg-gray-50 rounded-full px-5 py-3 text-sm text-gray-900 focus:outline-none focus:border-red-500 focus:bg-white focus:ring-4 focus:ring-red-100 transition"
               />
               <button
                 type="submit"
                 disabled={sending || !text.trim()}
-                className="bg-red-600 text-white rounded-xl px-5 py-2.5 text-sm font-semibold hover:bg-red-700 disabled:opacity-60"
+                aria-label="Send"
+                className="flex items-center gap-2 bg-gradient-to-r from-red-500 to-red-700 text-white rounded-full pl-5 pr-4 py-3 text-sm font-bold shadow-md shadow-red-500/25 hover:shadow-lg transition-all disabled:opacity-50 disabled:shadow-none"
               >
                 Send
+                <SendIcon className="w-4 h-4" />
               </button>
             </form>
           </>
