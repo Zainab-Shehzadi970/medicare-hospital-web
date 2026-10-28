@@ -1,10 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { FaIdCard, FaUser, FaXmark, FaArrowRight } from "react-icons/fa6";
+import { useRouter } from "next/router";
+import { FaIdCard, FaUser, FaXmark } from "react-icons/fa6";
+import { supabase } from "../lib/supabase";
+import { getHomeRoute } from "../lib/auth";
+import { useSession } from "../lib/useSession";
+import PatientAuthForm from "./patient-auth-form";
 
 const tabs = [
-  { id: "patient", label: "Patient (CNIC)", icon: FaIdCard },
+  { id: "patient", label: "Patient", icon: FaIdCard },
   { id: "staff", label: "Staff / Doctor", icon: FaUser },
 ];
 
@@ -22,24 +27,33 @@ const labelClass =
 const fieldClass =
   "w-full rounded-xl border border-white/10 bg-[#0b0f1a] px-5 py-4 text-base text-white placeholder:text-slate-500 focus:border-brand-red focus:outline-none";
 
-// Digits ko XXXXX-XXXXXXX-X shakal mein likhta hai
-function formatCnic(value) {
-  const digits = value.replace(/\D/g, "").slice(0, 13);
-  if (digits.length <= 5) return digits;
-  if (digits.length <= 12) return `${digits.slice(0, 5)}-${digits.slice(5)}`;
-  return `${digits.slice(0, 5)}-${digits.slice(5, 12)}-${digits.slice(12)}`;
-}
-
 function Dialog({ onClose }) {
+  const router = useRouter();
+  const session = useSession();
   const [tab, setTab] = useState("patient");
-  const [cnic, setCnic] = useState("");
   const [staff, setStaff] = useState({
     role: staffRoles[0].id,
     employeeId: "",
     password: "",
   });
+  const [staffError, setStaffError] = useState("");
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [route, setRoute] = useState(null);
 
-  // Escape se band, aur popup khula ho to peeche ka page scroll na ho
+  // Work out whether the signed-in account is a doctor or a patient
+  useEffect(() => {
+    if (!session) {
+      setRoute(null);
+      return undefined;
+    }
+    let alive = true;
+    getHomeRoute(session.user.id).then((r) => alive && setRoute(r));
+    return () => {
+      alive = false;
+    };
+  }, [session]);
+
+  // Close on Escape, and lock the page scroll behind the dialog while it is open
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", onKey);
@@ -50,20 +64,62 @@ function Dialog({ onClose }) {
     };
   }, [onClose]);
 
+  const goToDashboard = async () => {
+    const route = await getHomeRoute(session.user.id);
+    onClose();
+    router.push(route);
+  };
+
   const handleStaffChange = (e) => {
     const { name, value } = e.target;
     setStaff((prev) => ({ ...prev, [name]: value }));
   };
 
-  const handlePatientSubmit = (e) => {
-    e.preventDefault();
-    console.log("Patient login:", cnic); // TODO(backend): CNIC verify karna
+  // Patients sign in with the same account as the mobile app; doctors are sent to their console
+  const handlePatientSignedIn = async (user) => {
+    const route = await getHomeRoute(user.id);
+    onClose();
+    router.push(route);
   };
 
-  const handleStaffSubmit = (e) => {
+  const handleStaffSubmit = async (e) => {
     e.preventDefault();
-    // Password ko kabhi console mein na likhein
-    console.log("Staff login:", { role: staff.role, employeeId: staff.employeeId }); // TODO(backend)
+    setStaffError("");
+
+    // Only the Doctor console is built so far
+    if (staff.role !== "doctor") {
+      setStaffError("Only the Doctor console is available right now.");
+      return;
+    }
+
+    setStaffLoading(true);
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: staff.employeeId.trim().toLowerCase(),
+      password: staff.password,
+    });
+
+    if (error) {
+      setStaffError("Incorrect email or password.");
+      setStaffLoading(false);
+      return;
+    }
+
+    // Only accounts linked to the doctors table may enter
+    const { data: doctor } = await supabase
+      .from("doctors")
+      .select("id")
+      .eq("profile_id", data.user.id)
+      .maybeSingle();
+
+    if (!doctor) {
+      await supabase.auth.signOut();
+      setStaffError("This account is not linked to a doctor profile.");
+      setStaffLoading(false);
+      return;
+    }
+
+    onClose();
+    router.push("/doctor-appointments");
   };
 
   return (
@@ -113,36 +169,54 @@ function Dialog({ onClose }) {
         </div>
 
         {tab === "patient" ? (
-          <form onSubmit={handlePatientSubmit} className="mt-10">
-            <div className="text-center">
-              <h2 className="text-3xl font-bold text-white">Enter your CNIC</h2>
-              <p className="mt-2 text-base text-slate-400">
-                Booking or checking records for yourself
-              </p>
-            </div>
-
-            <label className="mt-8 block">
-              <span className={labelClass}>CNIC</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={cnic}
-                onChange={(e) => setCnic(formatCnic(e.target.value))}
-                placeholder="XXXXX-XXXXXXX-X"
-                pattern="\d{5}-\d{7}-\d"
-                title="Enter a 13-digit CNIC (XXXXX-XXXXXXX-X)"
-                required
-                className={`${fieldClass} tracking-wider`}
-              />
-            </label>
-
-            <button
-              type="submit"
-              className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-brand-red py-4 text-sm font-bold uppercase tracking-wider text-white shadow-[0_10px_25px_-5px_rgba(220,38,38,0.4)] transition-colors hover:bg-red-700"
-            >
-              Continue <FaArrowRight />
-            </button>
-          </form>
+          <div className="mt-10">
+            {session === undefined || (session && route === null) ? (
+              <p className="py-10 text-center text-slate-400">Loading...</p>
+            ) : session && route === "/doctor-appointments" ? (
+              <div className="text-center">
+                <h2 className="text-2xl font-bold text-white">Doctor account</h2>
+                <p className="mt-3 break-all text-base text-slate-400">{session.user.email}</p>
+                <p className="mt-3 text-base text-slate-400">
+                  The patient portal is for patients only. Doctors should use the Staff / Doctor login.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setTab("staff")}
+                  className="mt-8 w-full rounded-xl bg-brand-red py-4 text-sm font-bold uppercase tracking-wider text-white transition-colors hover:bg-red-700"
+                >
+                  Go to Staff / Doctor login
+                </button>
+                <button
+                  type="button"
+                  onClick={() => supabase.auth.signOut()}
+                  className="mt-3 w-full rounded-xl border border-white/10 py-4 text-sm font-bold uppercase tracking-wider text-slate-300 transition-colors hover:text-white"
+                >
+                  Sign out
+                </button>
+              </div>
+            ) : session ? (
+              <div className="text-center">
+                <h2 className="text-3xl font-bold text-white">You are signed in</h2>
+                <p className="mt-2 break-all text-base text-slate-400">{session.user.email}</p>
+                <button
+                  type="button"
+                  onClick={goToDashboard}
+                  className="mt-8 w-full rounded-xl bg-brand-red py-4 text-sm font-bold uppercase tracking-wider text-white shadow-[0_10px_25px_-5px_rgba(220,38,38,0.4)] transition-colors hover:bg-red-700"
+                >
+                  Go to my dashboard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => supabase.auth.signOut()}
+                  className="mt-3 w-full rounded-xl border border-white/10 py-4 text-sm font-bold uppercase tracking-wider text-slate-300 transition-colors hover:text-white"
+                >
+                  Sign out
+                </button>
+              </div>
+            ) : (
+              <PatientAuthForm onSignedIn={handlePatientSignedIn} />
+            )}
+          </div>
         ) : (
           <form onSubmit={handleStaffSubmit} className="mt-10 space-y-6">
             <label className="block">
@@ -162,13 +236,13 @@ function Dialog({ onClose }) {
             </label>
 
             <label className="block">
-              <span className={labelClass}>Employee ID / Email</span>
+              <span className={labelClass}>Email</span>
               <input
-                type="text"
+                type="email"
                 name="employeeId"
                 value={staff.employeeId}
                 onChange={handleStaffChange}
-                placeholder="e.g. DOC-8091"
+                placeholder="doctor@example.com"
                 autoComplete="username"
                 required
                 className={fieldClass}
@@ -189,11 +263,18 @@ function Dialog({ onClose }) {
               />
             </label>
 
+            {staffError && (
+              <p className="rounded-xl bg-red-950/60 px-4 py-3 text-sm text-red-300">
+                {staffError}
+              </p>
+            )}
+
             <button
               type="submit"
-              className="w-full rounded-xl bg-[#1e293b] py-4 text-sm font-bold uppercase tracking-wider text-white transition-colors hover:bg-slate-700"
+              disabled={staffLoading}
+              className="w-full rounded-xl bg-[#1e293b] py-4 text-sm font-bold uppercase tracking-wider text-white transition-colors hover:bg-slate-700 disabled:opacity-60"
             >
-              Login to Staff Console
+              {staffLoading ? "Signing in..." : "Login to Staff Console"}
             </button>
           </form>
         )}

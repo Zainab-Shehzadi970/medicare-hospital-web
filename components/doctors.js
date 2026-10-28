@@ -2,19 +2,21 @@
 
 import { useRef, useState } from "react";
 import { FaChevronLeft, FaChevronRight } from "react-icons/fa6";
-import { doctors } from "../data/doctors";
+import { useClinicData } from "../lib/useClinicData";
 import DoctorCard from "./doctor-card";
-
-const filters = ["All Doctors", "Cardiology", "Neurology", "Orthopedics", "Pediatrics", "Oncology"];
 
 export default function Doctors() {
   const trackRef = useRef(null);
   const [activeFilter, setActiveFilter] = useState("All Doctors");
+  const { departments, doctors, loading, error } = useClinicData();
+
+  const filters = ["All Doctors", ...departments.map((d) => d.name)];
+  const deptName = (id) => departments.find((d) => d.id === id)?.name ?? "";
 
   const filteredDoctors =
     activeFilter === "All Doctors"
       ? doctors
-      : doctors.filter((doc) => doc.specialty === activeFilter);
+      : doctors.filter((doc) => deptName(doc.department_id) === activeFilter);
 
   const handleFilter = (filter) => {
     setActiveFilter(filter);
@@ -77,11 +79,13 @@ export default function Doctors() {
           className="flex gap-6 pt-4 pb-8 overflow-x-auto snap-x snap-proximity  scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {filteredDoctors.map((doc) => (
-            <DoctorCard key={doc.id} doctor={doc} />
+            <DoctorCard key={doc.id} doctor={doc} departmentName={deptName(doc.department_id)} />
           ))}
         </div>
 
-        {filteredDoctors.length === 0 && (
+        {loading && <p className="text-center text-slate-400">Loading doctors...</p>}
+        {error && <p className="text-center text-red-400">Could not load doctors: {error}</p>}
+        {!loading && !error && filteredDoctors.length === 0 && (
           <p className="text-center text-slate-400">No doctors found in this department.</p>
         )}
       </div>

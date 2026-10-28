@@ -1,21 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { FaCalendarCheck, FaXmark, FaCircleCheck } from "react-icons/fa6";
 import { useBooking } from "./booking-context";
-import { departmentslist } from "@/data/services";
-import { doctors } from "@/data/doctors";
-import { getBookedSlots } from "@/data/booked-slots";
-
-// TODO(backend): slots baad mein doctor + date ke hisaab se API se aayenge
-const timeSlots = [
-  "09:00 AM",
-  "09:30 AM",
-  "10:00 AM",
-  "10:30 AM",
-  "11:00 AM",
-  "11:30 AM",
-];
+import { supabase } from "../lib/supabase";
+import { useSession } from "../lib/useSession";
+import { getHomeRoute } from "../lib/auth";
+import PatientAuthForm from "./patient-auth-form";
+import { useClinicData, buildSlots, fmt12, todayISO } from "../lib/useClinicData";
 
 const emptyForm = {
   departmentId: "",
@@ -33,17 +26,11 @@ const labelClass =
 const fieldClass =
   "w-full rounded-xl border border-white/10 bg-[#0b1120] px-4 py-3.5 text-base text-white placeholder:text-slate-500 focus:border-brand-red focus:outline-none disabled:opacity-50";
 
-// Doctor card se sirf doctorId aaye to department bhi khud nikal leta hai
 function getInitialForm({ departmentId, doctorId, date } = {}) {
-  const doctor = doctors.find((d) => d.id === doctorId);
-  const department =
-    departmentId ??
-    departmentslist.find((d) => d.name === doctor?.specialty)?.id;
-
   return {
     ...emptyForm,
-    departmentId: department ?? "",
-    doctorId: doctor?.id ?? "",
+    departmentId: departmentId ?? "",
+    doctorId: doctorId ?? "",
     date: date ?? "",
   };
 }
@@ -58,11 +45,41 @@ function Field({ label, className = "", children }) {
 }
 
 function Dialog({ prefill, onClose }) {
-  // Dialog har dafa naya mount hota hai, isliye prefill seedha initial state ban jata hai
+  // The dialog mounts fresh every time, so the prefill becomes the initial state directly
   const [form, setForm] = useState(() => getInitialForm(prefill));
   const [submitted, setSubmitted] = useState(false);
+  const [booked, setBooked] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const session = useSession();
+  const [isDoctorUser, setIsDoctorUser] = useState(false);
 
-  // Escape se band, aur popup khula ho to peeche ka page scroll na ho
+  // Doctor accounts cannot book appointments as patients
+  useEffect(() => {
+    if (!session) {
+      setIsDoctorUser(false);
+      return undefined;
+    }
+    let alive = true;
+    getHomeRoute(session.user.id).then((r) => alive && setIsDoctorUser(r === "/doctor-appointments"));
+    return () => {
+      alive = false;
+    };
+  }, [session]);
+
+  // Pre-fill name and phone from the patient's account
+  useEffect(() => {
+    const u = session?.user;
+    if (!u) return;
+    setForm((p) => ({
+      ...p,
+      name: p.name || u.user_metadata?.full_name || "",
+      phone: p.phone || u.user_metadata?.phone || "",
+    }));
+  }, [session]);
+  const { departments, doctors, schedules, loading: dataLoading, error: dataError } = useClinicData();
+
+  // Close on Escape, and lock the page scroll behind the dialog while it is open
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", onKey);
@@ -73,40 +90,96 @@ function Dialog({ prefill, onClose }) {
     };
   }, [onClose]);
 
-  // Form mein ids hain, naam sirf screen par dikhane ke liye nikalte hain
-  const department = departmentslist.find((d) => d.id === form.departmentId);
-  const doctor = doctors.find((d) => d.id === form.doctorId);
-  const departmentDoctors = doctors.filter(
-    (doc) => doc.specialty === department?.name
-  );
+  // Once data has loaded, resolve the department from the prefill (doctor id or department name/id)
+  useEffect(() => {
+    if (!departments.length) return;
+    setForm((prev) => {
+      if (prev.departmentId && departments.some((d) => d.id === prev.departmentId)) return prev;
+      const doc = doctors.find((d) => d.id === prev.doctorId);
+      const key = String(prev.departmentId || "").toLowerCase();
+      const dept =
+        departments.find((d) => d.id === doc?.department_id) ||
+        departments.find((d) => d.id === prev.departmentId || d.name.toLowerCase() === key);
+      return dept ? { ...prev, departmentId: dept.id } : prev;
+    });
+  }, [departments, doctors]);
 
-  // Slots tab dikhte hain jab doctor chuna ho; booked slots disabled hote hain
-  const bookedSlots = getBookedSlots(form.doctorId);
+  const department = departments.find((d) => d.id === form.departmentId);
+  const doctor = doctors.find((d) => d.id === form.doctorId);
+  const departmentDoctors = doctors.filter((doc) => doc.department_id === form.departmentId);
+
+  // Slots come from the doctor's schedule; booked slots come from Supabase (refreshed every 10 seconds)
+  const timeSlots = buildSlots(doctor, schedules, form.date);
   const slotsLocked = !form.doctorId || !form.date;
+
+  useEffect(() => {
+    if (!form.doctorId || !form.date) {
+      setBooked([]);
+      return;
+    }
+    let alive = true;
+    const load = async () => {
+      const { data, error } = await supabase.rpc("get_booked_slots", {
+        p_doctor: form.doctorId,
+        p_date: form.date,
+      });
+      if (!alive) return;
+      setBooked(
+        error || !data
+          ? []
+          : data.map((r) => String(typeof r === "string" ? r : r.time_slot).slice(0, 5))
+      );
+    };
+    load();
+    const t = setInterval(load, 10000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [form.doctorId, form.date]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setForm((prev) => {
-      const next = {
-        ...prev,
-        [name]: value,
-        // department badle to doctor dobara chunna parega
-        ...(name === "departmentId" && { doctorId: "" }),
-      };
-      // doctor badalne par chuna hua slot booked nikle to hata do
-      return getBookedSlots(next.doctorId).includes(next.timeSlot)
-        ? { ...next, timeSlot: "" }
-        : next;
-    });
+    setSubmitError("");
+    setForm((prev) => ({
+      ...prev,
+      [name]: value,
+      ...(name === "departmentId" && { doctorId: "", timeSlot: "" }),
+      ...(name === "doctorId" && { timeSlot: "" }),
+      ...(name === "date" && { timeSlot: "" }),
+    }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log("Appointment request:", form); // baad mein yahan API call lagegi
+    if (!session) return;
+    setSubmitError("");
+    setSaving(true);
+    // Same appointments table as the mobile app, saved under the signed-in patient
+    const { error } = await supabase.from("appointments").insert({
+      patient_id: session.user.id,
+      doctor_id: form.doctorId,
+      appointment_date: form.date,
+      time_slot: form.timeSlot,
+      patient_name: form.name.trim(),
+      patient_phone: form.phone.trim(),
+      reason: form.reason.trim() || null,
+      status: "pending",
+    });
+    setSaving(false);
+    if (error) {
+      setSubmitError(
+        error.code === "23505"
+          ? "This slot was just booked. Please choose another time."
+          : error.message
+      );
+      if (error.code === "23505") setForm((p) => ({ ...p, timeSlot: "" }));
+      return;
+    }
     setSubmitted(true);
   };
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = todayISO();
 
   return (
     <div
@@ -147,7 +220,31 @@ function Dialog({ prefill, onClose }) {
           </button>
         </div>
 
-        {submitted ? (
+        {session === undefined ? (
+          <p className="py-16 text-center text-slate-400">Loading...</p>
+        ) : !session ? (
+          <div className="mt-9">
+            <PatientAuthForm
+              heading="Sign in to book"
+              subheading="Use the same account as the Medicare mobile app, or create a new one."
+              onSignedIn={() => {}}
+            />
+          </div>
+        ) : isDoctorUser ? (
+          <div className="py-12 text-center">
+            <h3 className="text-2xl font-bold text-white">Doctor account</h3>
+            <p className="mx-auto mt-3 max-w-md leading-relaxed text-slate-400">
+              Appointments can only be booked from a patient account. Please sign out and log in as a patient.
+            </p>
+            <button
+              type="button"
+              onClick={() => supabase.auth.signOut()}
+              className="mt-8 rounded-xl bg-brand-red px-8 py-4 text-sm font-bold uppercase tracking-wider text-white transition-colors hover:bg-red-700"
+            >
+              Sign out
+            </button>
+          </div>
+        ) : submitted ? (
           <div className="py-12 text-center">
             <FaCircleCheck className="mx-auto text-6xl text-emerald-500" />
             <h3 className="mt-6 text-2xl font-bold text-white">
@@ -155,7 +252,7 @@ function Dialog({ prefill, onClose }) {
             </h3>
             <p className="mx-auto mt-3 max-w-md leading-relaxed text-slate-400">
               {form.name}, your {department?.name} appointment with{" "}
-              {doctor?.name} on {form.date} at {form.timeSlot} has been
+              {doctor?.name} on {form.date} at {fmt12(form.timeSlot)} has been
               received. We will confirm on {form.phone}.
             </p>
             <button
@@ -165,6 +262,13 @@ function Dialog({ prefill, onClose }) {
             >
               Close
             </button>
+            <p className="mt-6 text-sm text-slate-400">
+              Track this request in{" "}
+              <Link href="/patient-dashboard" onClick={onClose} className="font-bold text-brand-red">
+                My Dashboard
+              </Link>
+              .
+            </p>
           </div>
         ) : (
           <form
@@ -180,7 +284,7 @@ function Dialog({ prefill, onClose }) {
                 className={fieldClass}
               >
                 <option value="">Choose Department</option>
-                {departmentslist.map((dept) => (
+                {departments.map((dept) => (
                   <option key={dept.id} value={dept.id}>
                     {dept.name}
                   </option>
@@ -239,7 +343,7 @@ function Dialog({ prefill, onClose }) {
                 }`}
               >
                 {timeSlots.map((slot) => {
-                  const isBooked = bookedSlots.includes(slot);
+                  const isBooked = booked.includes(slot);
                   const disabled = slotsLocked || isBooked;
                   return (
                     <label
@@ -264,7 +368,7 @@ function Dialog({ prefill, onClose }) {
                         }`}
                       >
                         <span className={isBooked ? "line-through" : ""}>
-                          {slot}
+                          {fmt12(slot)}
                         </span>
                         {isBooked && (
                           <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-wide">
@@ -279,6 +383,11 @@ function Dialog({ prefill, onClose }) {
               {slotsLocked && (
                 <p className="mt-2 text-xs text-slate-500">
                   Select doctor and date to see available slots.
+                </p>
+              )}
+              {!slotsLocked && timeSlots.length === 0 && (
+                <p className="mt-2 text-xs text-slate-500">
+                  Doctor is not available on this date. Please pick another day.
                 </p>
               )}
             </fieldset>
@@ -307,11 +416,18 @@ function Dialog({ prefill, onClose }) {
               />
             </Field>
 
+            {(submitError || dataError) && (
+              <p className="sm:col-span-2 rounded-lg bg-red-950/60 px-4 py-3 text-sm text-red-300">
+                {submitError || dataError}
+              </p>
+            )}
+
             <button
               type="submit"
-              className="rounded-xl bg-brand-red py-4 text-sm font-bold uppercase tracking-wider text-white shadow-[0_10px_25px_-5px_rgba(220,38,38,0.4)] transition-colors hover:bg-red-700 sm:col-span-2"
+              disabled={saving || dataLoading}
+              className="rounded-xl bg-brand-red py-4 text-sm font-bold uppercase tracking-wider text-white shadow-[0_10px_25px_-5px_rgba(220,38,38,0.4)] transition-colors hover:bg-red-700 disabled:opacity-60 sm:col-span-2"
             >
-              Confirm Appointment Slot
+              {saving ? "Booking..." : "Confirm Appointment Slot"}
             </button>
           </form>
         )}
